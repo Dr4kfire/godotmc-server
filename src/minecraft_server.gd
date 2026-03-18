@@ -32,7 +32,7 @@ func get_status_json_str() -> String:
 		"description": {
 			"text": server_motd
 		},
-		"favicon": "data:image/png;base64,%s" % [],
+		#"favicon": "data:image/png;base64,%s" % [],
 		"enforcesSecureChat": enforces_secure_chat
 		}
 	return JSON.stringify(data)

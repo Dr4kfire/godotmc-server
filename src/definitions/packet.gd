@@ -15,21 +15,16 @@ enum FIELD_NAMES {
 
 
 static func decode_packet(raw: PackedByteArray) -> Packet:
+	var len_decode := MCTypes.decode_varint(raw, 0)
+	if len_decode.error != OK:
+		return null
+	
 	var new_packet: Packet = Packet.new()
-	
-	var decode: Array = MCTypes.decode_varint(raw)
-	if decode
-	
-	var packet_len: int = decode[2]
-	var packet_id: int = raw.decode_u8(decode[1])
-	var data: PackedByteArray = raw.slice(decode[1]+2)
-	
-	
-	
-	new_packet.fields.set(FIELD_NAMES.LENGTH, packet_len)
-	new_packet.fields.set(FIELD_NAMES.ID, packet_id)
-	new_packet.fields.set(FIELD_NAMES.DATA, data)
-	new_packet.raw_packet = raw
+	new_packet.fields = {
+		FIELD_NAMES.LENGTH: len_decode.value,
+		FIELD_NAMES.ID: raw.decode_u8(len_decode.byte_length),
+		FIELD_NAMES.DATA: raw.slice(len_decode.byte_length+1),
+		}
 	return new_packet
 
 enum PACKET_IDS {

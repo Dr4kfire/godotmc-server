@@ -33,97 +33,65 @@ enum { ## TYPES
 
 
 
-## Returns an array [ERROR, NEW_OFFSET (next byte after the last one), 
-## decoded value (null if unsuccessful)]
-static func decode_boolean(packet: PackedByteArray, offset: int = 0) -> Array:
+static func decode_boolean(packet: PackedByteArray, offset: int = 0) -> DecodeReturn:
 	if _is_outside_of_range(packet, offset):
-		return [ERR_FILE_EOF, offset, null]
-	var byte: int = packet[offset]
-	if byte < 0 || byte > 1:
-		return [ERR_INVALID_DATA, offset, null]
-	return [OK, offset+1, byte as bool]
+		return DecodeReturn.quick(ERR_FILE_EOF)
+	var byte: int = packet.decode_u8(offset)
+	if byte > 1:
+		return DecodeReturn.quick(ERR_INVALID_DATA)
+	return DecodeReturn.quick(OK, 1, type_convert(byte, TYPE_BOOL), TYPE_BOOL)
 
 
-## Returns an array [ERROR, NEW_OFFSET (next byte after the last one), 
-## decoded value (null if unsuccessful)]
 static func decode_varint(packet: PackedByteArray, offset: int = 0) -> DecodeReturn:
-	var ret := DecodeReturn.new()
-	if _is_outside_of_range(packet, offset):
-		ret.error = ERR_FILE_EOF
-		return ret
-	const SEGMENT_BITS := 0x7f
+	const SEGMENT_MASK := 0x7f
 	const CONTINUE_BIT := 0x80
 	
-	var value: int = 0
-	var position: int = 0
-	var current_byte: int = 0x00
-	var current_offset: int = offset
-	while true:
-		current_byte = packet.decode_u8(current_offset)
-		var unmasked_value := (current_byte & SEGMENT_BITS) << position
-		value = value | unmasked_value
-		
-		position += 7
-		current_offset += 1
-		
-		if (current_byte & CONTINUE_BIT) == 0: break
-		if (position >= 32):
-			ret.error = ERR_INVALID_DATA
-			return ret
-	ret.byte_length = packet.slice(offset, current_offset).size()
-	ret.error = OK
-	ret.value = value as int
-	return ret
-
-static func decode_varint_(packet: PackedByteArray, offset: int) -> DecodeReturn:
 	if _is_outside_of_range(packet, offset):
-		return DecodeReturn.quick(null, 0, ERR_FILE_EOF)
+		return DecodeReturn.quick(ERR_FILE_EOF)
 	
-	return null
-
-static func decode_varint_from_stream(stream: StreamPeerTCP) -> Array:
-	# Returns [error_code, value, bytes_read]
-	const SEGMENT_BITS := 0x7f
-	const CONTINUE_BIT := 0x80
-	
-	var value: int = 0
-	var position: int = 0
-	var bytes_read: int = 0
-	var current_byte: int = 0x00
-	
-	while true:
-		if stream.get_available_bytes() < 1:
-			return [ERR_UNAVAILABLE, 0, 0]
-		
-		current_byte = stream.get_u8()
-		var unmasked_value := (current_byte & SEGMENT_BITS) << position
-		value = value | unmasked_value
-		
-		position += 7
-		bytes_read += 1
-		
-		if (current_byte & CONTINUE_BIT) == 0:
+	var result: DecodeReturn = DecodeReturn.quick(OK, 0, 0, TYPE_INT)
+	for position in range(0, 64, 7):
+		var byte: int = packet.decode_u8(offset + floori(position/7.0))
+		var unmasked_value := (byte & SEGMENT_MASK) << position
+		result.value = result.value | unmasked_value
+		if (byte & CONTINUE_BIT) == 0: 
+			result.byte_length = floori(position/7.0)
 			break
 		
-		if position >= 32:  # Or 21 if you want to enforce the 3-byte limit
-			return [ERR_INVALID_DATA, 0, 0]
+		if position + 7 >= 64:
+			return DecodeReturn.quick(ERR_INVALID_DATA)
+	return result
+
+
+static func decode_varint_from_stream(stream: StreamPeerTCP) -> DecodeReturn:
+	const SEGMENT_MASK := 0x7f
+	const CONTINUE_BIT := 0x80
 	
-	return [OK, value, bytes_read]
+	if stream.get_available_bytes() < 1:
+		return DecodeReturn.quick(ERR_UNAVAILABLE)
+	
+	var result: DecodeReturn = DecodeReturn.quick(OK, 0, 0, TYPE_INT)
+	for position in range(0, 64, 7):
+		var byte: int = stream.get_u8()
+		var unmasked_value := (byte & SEGMENT_MASK) << position
+		result.value = result.value | unmasked_value
+		if (byte & CONTINUE_BIT) == 0: 
+			result.byte_length = floori(position/7.0)+1
+			break
+		
+		if position + 7 >= 64:
+			return DecodeReturn.quick(ERR_INVALID_DATA)
+	return result
 
 
-
-
-
-## Returns an array [ERROR, NEW_OFFSET (next byte after the last one), 
-## decoded value (null if unsuccessful)]
-static func decode_string(packet: PackedByteArray, offset: int = 0) -> Array:
-	var result: Array = decode_varint(packet, offset)
-	if result[0] != OK:
-		return [result[0], offset, null]
-	var current_offset: int = result[1]
-	var bytes_len: int = result[2]
-	var string_bytes = packet.slice(current_offset, current_offset+bytes_len)
-	return [OK, current_offset+bytes_len, string_bytes]
+static func decode_string(packet: PackedByteArray, offset: int = 0) -> DecodeReturn:
+	var result: DecodeReturn = decode_varint(packet, offset)
+	if result.error != OK:
+		return DecodeReturn.quick(result.error)
+	var string_bytes := packet.slice(offset + result.byte_length + 1)
+	return DecodeReturn.quick(
+		OK, result.byte_length+string_bytes.size(), 
+		string_bytes.get_string_from_utf8(), TYPE_STRING)
 
 
 
@@ -132,11 +100,9 @@ static func encode_boolean(value: bool) -> PackedByteArray:
 	if value: return [0x01]
 	return [0x00]
 
-
 static func encode_varint(value: int) -> PackedByteArray:
 	const SEGMENT_MASK := 0x7f
 	const CONTINUE_BIT := 0x80
-	
 	var varint: PackedByteArray
 	while true:
 		if (value & ~SEGMENT_MASK) == 0:
@@ -145,7 +111,6 @@ static func encode_varint(value: int) -> PackedByteArray:
 		varint.append((value & SEGMENT_MASK) | CONTINUE_BIT)
 		value = _unsigned_right_shift(value, 7)
 	return varint
-
 
 static func encode_string(value: String) -> PackedByteArray:
 	var str_buffer := value.to_utf8_buffer()
@@ -166,12 +131,16 @@ static func _unsigned_right_shift(value: int, shift_ammount: int) -> int:
 
 
 class DecodeReturn:
-	var value: Variant = null
-	var byte_length: int = 0
 	var error: Error = ERR_UNCONFIGURED
+	var byte_length: int = 0
+	var value: Variant = null
+	var value_type: Variant.Type = TYPE_NIL
 	
-	static func quick(value: Variant, byte_length: int, error: Error) -> DecodeReturn:
+	static func quick(_error: Error, _byte_length: int = 0, _value: Variant = null, 
+	_value_type: Variant.Type = TYPE_NIL) -> DecodeReturn:
 		var new: DecodeReturn = DecodeReturn.new()
-		new.byte_length = byte_length
-		new.value = value
-		new.error = new.error
+		new.error = _error
+		new.byte_length = _byte_length
+		new.value = _value
+		new.value_type = _value_type
+		return new

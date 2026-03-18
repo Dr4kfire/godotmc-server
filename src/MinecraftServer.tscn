@@ -24,4 +24,4 @@ script = ExtResource("3_62d5y")
 connection_handler = NodePath("../ConnectionHandler")
 metadata/_custom_type_script = "uid://ciwo16t500spn"
 
-[connection signal="new_packet_recieved" from="MCTCPServerHandler/ConnectionHandler" to="MCTCPServerHandler/PacketsHandler" method="handle_incomming_packet"]
+[connection signal="new_packet_received" from="MCTCPServerHandler/ConnectionHandler" to="MCTCPServerHandler/PacketsHandler" method="handle_incomming_packet"]
